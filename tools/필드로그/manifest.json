@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "필드로그 (FieldLog)",
+  "version": "2.0.0",
+  "description": "아무 웹사이트의 입력 폼 구조와 반응을 기록하는 현장 조사 도구. (내부용)",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "activeTab",
+    "webNavigation"
+  ],
+  "action": {
+    "default_title": "필드로그 — 폼 기록",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
+      "js": [
+        "recorder.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

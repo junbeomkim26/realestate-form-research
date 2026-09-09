@@ -1,0 +1,552 @@
+<!doctype html><meta charset="utf-8"><title>recorder 자체점검</title>
+<style>body{font:13px/1.6 -apple-system,sans-serif;padding:16px;max-width:760px}
+.row{margin:6px 0}label{display:inline-block;width:150px;color:#555}
+#log{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;background:#0d1117;color:#d7dce5;padding:12px;border-radius:8px;margin-top:14px}
+.ok{color:#6ee7b7}.bad{color:#f87171}
+#cal,#customList{display:none;position:absolute;background:#fff;border:1px solid #ccc;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+#customCombo,[contenteditable]{display:inline-block;min-width:180px;min-height:22px;border:1px solid #999;padding:2px 5px}
+</style>
+
+<h3>recorder.js 확장모드 자체점검</h3>
+
+<form id="f">
+  <div class="row"><label>전체 층</label>
+    <select name="floorAll"><option value="">선택</option><option value="5">5</option></select></div>
+  <div class="row"><label>해당 층</label>
+    <select name="floor"><option value="">선택</option><option value="B1">반지하</option><option value="R">옥탑</option></select></div>
+  <div class="row"><label>입주가능일</label>
+    <input name="moveInDate" readonly placeholder="날짜 선택"></div>
+  <div class="row"><label>전용면적(㎡)</label>
+    <input name="area" inputmode="decimal" placeholder="0.00"></div>
+  <div class="row"><label>전용면적(평)</label>
+    <input name="areaPyeong" readonly placeholder="자동"></div>
+  <div class="row"><label>보증금</label>
+    <input name="deposit" inputmode="numeric" maxlength="9"></div>
+  <div class="row"><label>일반 빠른 입력</label>
+    <input name="plainRapid"></div>
+  <fieldset class="row"><legend>거래 유형</legend>
+    <label for="tradeMonthly">월세</label><input id="tradeMonthly" type="radio" name="tradeType" value="MONTHLY">
+    <label for="tradeLease">전세</label><input id="tradeLease" type="radio" name="tradeType" value="LEASE">
+  </fieldset>
+  <fieldset class="row"><legend>편의 시설</legend>
+    <label for="optElevator">엘리베이터</label><input id="optElevator" type="checkbox" name="facility" value="ELEVATOR">
+    <label for="optParking">주차</label><input id="optParking" type="checkbox" name="facility" value="PARKING">
+  </fieldset>
+  <div class="row"><label id="customComboLabel">커스텀 목록</label>
+    <div id="customCombo" role="combobox" tabindex="0" aria-labelledby="customComboLabel" aria-controls="customList" aria-expanded="false">선택</div></div>
+  <div class="row"><label for="customText">내용 편집</label>
+    <div id="customText" role="textbox" contenteditable="true"></div></div>
+  <div id="anonymousEditRow" class="row"><label>익명 편집</label>
+    <div data-testid="anonymous-editable" role="textbox" contenteditable="true"></div></div>
+  <div class="row"><label>중복 이름 A</label><input name="duplicateGeneral"></div>
+  <div class="row"><label>중복 이름 B</label><input name="duplicateGeneral"></div>
+  <div class="row"><label>민감정보</label><input name="accountPassword" type="password"></div>
+  <input name="csrfToken" type="hidden" value="ALWAYS_HIDDEN_SECRET_7219">
+  <div id="conditionalWrap" class="row"><label>조건부 칸</label><input name="conditionalField"></div>
+</form>
+
+<form id="duplicateChoiceFormA"><label>중복 그룹 A</label><input type="radio" name="sharedChoice" value="SAME"></form>
+<form id="duplicateChoiceFormB"><label>중복 그룹 B</label><input type="radio" name="sharedChoice" value="SAME"></form>
+
+<div id="cal"><div class="rdp"><div class="rdp-grid"></div></div></div>
+<div id="customList" role="listbox"><div id="customOptA" role="option" data-value="A">옵션 A</div><div id="customOptB" role="option" data-value="B">옵션 B</div></div>
+<div id="shadowHost"></div>
+<div id="log" data-fieldlog-ui="selftest-log">준비 중…</div>
+
+<script>
+/* ── 폼 자체 동작: 실제 사이트가 하는 일을 흉내 ── */
+const f = document.forms.f;
+f.floorAll.addEventListener('change', () => {          // 전체층 고르면 해당층 옵션이 늘어남
+  const s = f.floor;
+  if (s.options.length > 3) return;
+  for (let i = 1; i <= 5; i++) s.add(new Option(i + '층', String(i)));
+});
+f.area.addEventListener('input', () => {               // ㎡ → 평 자동환산 (부수효과)
+  const v = parseFloat(f.area.value);
+  f.areaPyeong.value = v ? (v * 0.3025).toFixed(1) : '';
+});
+f.moveInDate.addEventListener('click', () => {         // 클릭하면 캘린더가 뜸
+  const g = document.querySelector('.rdp-grid');
+  if (!g.children.length) for (let i = 1; i <= 31; i++) { const b = document.createElement('button'); b.type='button'; b.name='day'; b.textContent=i; g.appendChild(b); }
+  const c = document.getElementById('cal');
+  c.style.display = 'block'; c.style.left = '200px'; c.style.top = '160px';
+});
+f.deposit.addEventListener('input', () => {            // 숫자만 남기고 콤마 (자동 포맷)
+  const n = f.deposit.value.replace(/[^0-9]/g, '');
+  f.deposit.value = n ? Number(n).toLocaleString() : '';
+});
+const customCombo = document.getElementById('customCombo');
+customCombo.addEventListener('click', () => {
+  customCombo.setAttribute('aria-expanded', 'true');
+  const list = document.getElementById('customList');
+  list.style.display = 'block'; list.style.left = '220px'; list.style.top = '300px';
+});
+const shadow = document.getElementById('shadowHost').attachShadow({ mode: 'open' });
+shadow.innerHTML = '<label for="shadowInput">그림자 입력</label><input id="shadowInput" name="shadowValue"><div id="shadowSwitch" role="switch" aria-checked="false" tabindex="0">그림자 스위치</div>';
+
+/* ── chrome.* 스텁: recorder.js 의 확장 경로를 그대로 태운다 ── */
+const DB = {};
+const SESSION_DB = {};
+const listeners = [];
+const messageListeners = [];
+let STORAGE_DELAY_MS = 0;
+let STORAGE_IN_FLIGHT = 0;
+window.chrome = {
+  runtime: {
+    id: 'selftest', lastError: undefined,
+    onMessage: { addListener: (fn) => messageListeners.push(fn) },
+  },
+  storage: {
+    local: {
+      get(keys, cb) {
+        let out = {};
+        if (keys === null || keys === undefined) out = JSON.parse(JSON.stringify(DB));
+        else for (const k of (Array.isArray(keys) ? keys : [keys])) if (k in DB) out[k] = JSON.parse(JSON.stringify(DB[k]));
+        setTimeout(() => cb(out), 0);
+      },
+      set(obj, cb) {
+        const copy = JSON.parse(JSON.stringify(obj));
+        const delay = STORAGE_DELAY_MS;
+        STORAGE_IN_FLIGHT++;
+        setTimeout(() => {
+          const chg = {};
+          for (const k of Object.keys(copy)) { chg[k] = { oldValue: DB[k], newValue: copy[k] }; DB[k] = copy[k]; }
+          listeners.forEach(l => l(chg, 'local'));
+          STORAGE_IN_FLIGHT--;
+          cb && cb();
+        }, delay);
+      },
+      remove(keys, cb) { for (const k of [].concat(keys)) delete DB[k]; cb && cb(); },
+    },
+    session: {
+      get(keys, cb) {
+        let out = {};
+        if (keys === null || keys === undefined) out = JSON.parse(JSON.stringify(SESSION_DB));
+        else for (const k of (Array.isArray(keys) ? keys : [keys])) if (k in SESSION_DB) out[k] = JSON.parse(JSON.stringify(SESSION_DB[k]));
+        setTimeout(() => cb(out), 0);
+      },
+      set(obj, cb) {
+        const copy = JSON.parse(JSON.stringify(obj));
+        const delay = STORAGE_DELAY_MS;
+        STORAGE_IN_FLIGHT++;
+        setTimeout(() => {
+          const chg = {};
+          for (const k of Object.keys(copy)) { chg[k] = { oldValue: SESSION_DB[k], newValue: copy[k] }; SESSION_DB[k] = copy[k]; }
+          listeners.forEach(l => l(chg, 'session'));
+          STORAGE_IN_FLIGHT--;
+          cb && cb();
+        }, delay);
+      },
+      remove(keys, cb) { for (const k of [].concat(keys)) delete SESSION_DB[k]; cb && cb(); },
+      setAccessLevel(_options, cb) { cb && cb(); },
+    },
+    onChanged: { addListener: (fn) => listeners.push(fn) },
+  },
+};
+
+function emitFlag(on) {
+  const oldValue = SESSION_DB.fl_on;
+  SESSION_DB.fl_on = on;
+  listeners.forEach(l => l({ fl_on: { oldValue, newValue: on } }, 'session'));
+}
+
+function sendRuntime(message) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = null;
+    const respond = (value) => {
+      if (!settled) { settled = true; if (timeoutId) clearTimeout(timeoutId); resolve(value); }
+    };
+    timeoutId = setTimeout(() => respond({ ok: false, error: 'response-timeout' }), 30000);
+    for (const listener of messageListeners) {
+      const async = listener(message, { tab: { id: 1 }, frameId: 0 }, respond);
+      if (async !== true && settled) break;
+    }
+  });
+}
+
+/* ── 점검 실행 ──
+   숨겨진 탭에서는 setTimeout 이 ~1초로 클램프된다(백그라운드 스로틀링).
+   고정 대기 대신 "조건이 될 때까지" 폴링해야 결과가 흔들리지 않는다. */
+const L = [];
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+const until = async (fn, ms = 30000, step = 120) => {
+  const t = Date.now();
+  for (;;) { try { if (fn()) return true; } catch (_) {} if (Date.now() - t > ms) return false; await wait(step); }
+};
+const put  = (el, v) => { el.focus(); el.value = v; el.dispatchEvent(new Event('input',  { bubbles: true })); };
+const fire = (el, v) => { el.focus(); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); };
+
+let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  (cond ? pass++ : fail++);
+  L.push(`<span class="${cond ? 'ok' : 'bad'}">${cond ? '✔' : '✘'}</span> ${name}${detail ? '  — ' + detail : ''}`);
+  document.getElementById('log').innerHTML = L.join('\n');
+}
+
+let KEY = null;
+let PLAIN_KEY = null;
+let lastStartReply = null;
+let lastStartAckWaitedForStorage = false;
+let lastStopReply = null;
+const badges  = () => [...document.documentElement.children].filter(e => e.tagName === 'DIV' && /● REC/.test(e.textContent || '')).length;
+const ended   = () => (DB[KEY] && DB[KEY].meta && DB[KEY].meta.endedAt) || null;
+const F       = () => (DB[KEY] && DB[KEY].fields) || {};
+const states  = () => (DB[KEY] && DB[KEY].states) || [];
+const subsequence = (all, wanted) => {
+  let i = 0;
+  for (const x of all) if (x === wanted[i]) i++;
+  return i === wanted.length;
+};
+
+async function startRec(mask = false, ackDelay = 0) {
+  await new Promise(resolve => chrome.storage.local.set({ fl_mask: mask }, resolve));
+  STORAGE_DELAY_MS = ackDelay;
+  await new Promise(resolve => chrome.storage.session.set({ fl_on: true, fl_origins: [location.origin] }, resolve));
+  let ackSettled = false;
+  const replyPromise = sendRuntime({
+    type: 'fieldlog:start', requestId: `start-${Date.now()}-${mask ? 'masked' : 'plain'}`,
+    frameId: 7, documentId: 'selftest-document-1',
+  }).then(reply => { ackSettled = true; return reply; });
+  const sawSaveInFlight = ackDelay ? await until(() => STORAGE_IN_FLIGHT > 0) : true;
+  lastStartAckWaitedForStorage = sawSaveInFlight && !ackSettled;
+  lastStartReply = await replyPromise;
+  STORAGE_DELAY_MS = 0;
+  const shown = await until(() => badges() === 1);
+  if (!shown || !lastStartReply || !lastStartReply.ok || !lastStartReply.storageKey) return false;
+  KEY = lastStartReply.storageKey;
+  if (!mask && !PLAIN_KEY) PLAIN_KEY = KEY;
+  return !!DB[KEY];
+}
+async function stopRec() {
+  const requestedAt = Date.now();
+  lastStopReply = await sendRuntime({
+    type: 'fieldlog:stop', requestId: `stop-${requestedAt}`,
+    frameId: 7, documentId: 'selftest-document-1',
+  });
+  await new Promise(resolve => chrome.storage.session.set({ fl_on: false }, resolve));
+  const gone  = await until(() => badges() === 0);
+  const saved = await until(() => ended() && Date.parse(ended()) >= requestedAt && states().some(s => String(s.requestId).startsWith('auto-stop:')));
+  const idle = await until(() => STORAGE_IN_FLIGHT === 0);
+  return !!(lastStopReply && lastStopReply.ok && gone && saved && idle);
+}
+
+function dispatchHangulSequence(el, value) {
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'mouse' }));
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, composed: true }));
+  el.focus();
+  el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, composed: true, data: '' }));
+  el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, composed: true, data: value }));
+  el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, key: 'ㅎ', code: 'KeyG' }));
+  if (el.isContentEditable) el.textContent = value; else el.value = value;
+  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, data: value, inputType: 'insertCompositionText', isComposing: true }));
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: value, inputType: 'insertCompositionText', isComposing: true }));
+  el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, composed: true, data: value }));
+  el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+  el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, composed: true, key: 'ㅎ', code: 'KeyG' }));
+  el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, composed: true }));
+}
+
+function clickWithPointer(el) {
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'mouse' }));
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, composed: true }));
+  el.click();
+  el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, composed: true }));
+}
+
+window.__runSelfTest = async function () {
+  // ── 1차: 기본 수집 능력 ───────────────────────────────
+  const OTHER_DOCUMENT_KEY = 'p:selftest-other-document:plain';
+  DB[OTHER_DOCUMENT_KEY] = { meta: { url: location.href, captureId: 'selftest-other-document', storageKey: OTHER_DOCUMENT_KEY }, marker: 'keep-me' };
+  const unknownStop = await sendRuntime({ type: 'fieldlog:stop', requestId: 'never-started', frameId: 7, documentId: 'selftest-document-1' });
+  check('최종 저장 이력 없는 inactive stop은 성공으로 오인하지 않음', unknownStop.ok === false && /unknown/.test(unknownStop.error || ''));
+  check('start ACK → 저장 완료 뒤 배지 표시', await startRec(false, 700), JSON.stringify(lastStartReply));
+  check('start ACK는 초기 storage 저장 완료까지 기다림', lastStartAckWaitedForStorage && !!lastStartReply.stateId && !!DB[lastStartReply.storageKey],
+        `waited=${lastStartAckWaitedForStorage}, keys=${Object.keys(DB).join(',')}`);
+  const repeatedStart = await sendRuntime({ type: 'fieldlog:start', requestId: 'start-idempotent', frameId: 7, documentId: 'selftest-document-1' });
+  check('storage listener와 중복 start가 세션을 두 번 만들지 않음', repeatedStart.ok && repeatedStart.alreadyStarted === true && DB[KEY].meta.sessions === 1);
+
+  fire(f.floorAll, '5');
+  await until(() => f.floor.options.length > 3);          // 페이지가 옵션을 늘릴 때까지
+  f.moveInDate.click();
+  await until(() => document.getElementById('cal').style.display === 'block');
+  put(f.area, '33.06');
+  await until(() => f.areaPyeong.value !== '');
+  await until(() => DB[KEY] && (F()['name:area'].sideEffects || []).some(s => s.key === 'name:areaPyeong'));
+  put(f.deposit, '5000000');
+  await until(() => f.deposit.value.includes(','));
+  await until(() => DB[KEY] && !!F()['name:deposit'].reformatted);
+  put(f.plainRapid, '빠');
+  await wait(10);
+  put(f.plainRapid, '빠른입력');
+  await wait(500);
+
+  check('정지 → 배지 제거 + storage 저장', await stopRec(),
+        DB[KEY] ? `칸 ${Object.keys(F()).length}개` : '저장 안 됨');
+  if (!DB[KEY]) return done();
+  check('stop ACK에 프레임·저장 식별자와 정지 state', lastStopReply.storageKey === KEY &&
+        lastStopReply.captureId === DB[KEY].meta.captureId && lastStopReply.frameId === 7 &&
+        lastStopReply.documentId === 'selftest-document-1' && !!lastStopReply.stateId);
+
+  check('스키마 v2 기록', DB[KEY].meta.schemaVersion === 2);
+  check('문서별 captureId·storageKey·URL·프레임 메타', !!DB[KEY].meta.captureId && DB[KEY].meta.storageKey === KEY &&
+        DB[KEY].meta.url === location.href && DB[KEY].meta.frameContext && DB[KEY].meta.chromeFrameId === 7 &&
+        DB[KEY].meta.chromeDocumentId === 'selftest-document-1',
+        `${DB[KEY].meta.captureId || '-'} / ${KEY}`);
+  check('storage.session에만 녹화 플래그 보존', !('fl_on' in DB) && SESSION_DB.fl_on === false);
+  await new Promise(resolve => chrome.storage.session.set({ fl_on: true, fl_origins: ['https://other.example'] }, resolve));
+  check('허용되지 않은 origin 에서는 저장소 플래그만으로 시작하지 않음', !(await until(() => badges() === 1, 800)));
+  await new Promise(resolve => chrome.storage.session.set({ fl_on: false, fl_origins: [] }, resolve));
+  check('경량 summary를 페이지 기록과 원자적으로 저장', !!DB[DB[KEY].meta.summaryKey] &&
+        DB[DB[KEY].meta.summaryKey].storageKey === KEY && DB[DB[KEY].meta.summaryKey].fieldCount === Object.keys(F()).length);
+  check('같은 URL의 다른 문서 기록을 덮어쓰지 않음', DB[OTHER_DOCUMENT_KEY] && DB[OTHER_DOCUMENT_KEY].marker === 'keep-me');
+  const inactiveStop = await sendRuntime({ type: 'fieldlog:stop', requestId: 'already-stopped', frameId: 7, documentId: 'selftest-document-1' });
+  check('최종 저장된 inactive 프레임 stop은 성공 ACK', inactiveStop.ok && inactiveStop.alreadyStopped === true &&
+        inactiveStop.captureId === DB[KEY].meta.captureId && inactiveStop.documentId === 'selftest-document-1');
+  check('기존 일반 name 키 호환', !!F()['name:floor'] && !!F()['name:area']);
+  check('필드 전수 수집', Object.keys(F()).length >= 17, `총 ${Object.keys(F()).length}칸`);
+  check('select 옵션 누적 (해당층 3→8)', (F()['name:floor'].options || []).length >= 8,
+        `옵션 ${F()['name:floor'].options.length}개`);
+  check('캘린더 감지 (moveInDate)', F()['name:moveInDate'].opens === '캘린더',
+        F()['name:moveInDate'].opens || '미감지');
+  check('부수효과 감지 (㎡ → 평)', (F()['name:area'].sideEffects || []).some(s => s.key === 'name:areaPyeong'),
+        JSON.stringify(F()['name:area'].sideEffects || []));
+  check('부수효과 오귀속 없음 (면적)', (F()['name:area'].sideEffects || []).every(s => s.key === 'name:areaPyeong'),
+        JSON.stringify(F()['name:area'].sideEffects || []));
+  check('부수효과 오귀속 없음 (전체층·보증금)',
+        !(F()['name:floorAll'].sideEffects || []).length && !(F()['name:deposit'].sideEffects || []).length,
+        `floorAll=${JSON.stringify(F()['name:floorAll'].sideEffects||[])} deposit=${JSON.stringify(F()['name:deposit'].sideEffects||[])}`);
+  check('자동 포맷 감지 (보증금 콤마)', !!F()['name:deposit'].reformatted,
+        F()['name:deposit'].reformatted ? `${F()['name:deposit'].reformatted.from} → ${F()['name:deposit'].reformatted.to}` : '미감지');
+  check('빠른 연속 입력을 자동 포맷으로 오판하지 않음', !F()['name:plainRapid'].reformatted,
+        JSON.stringify(F()['name:plainRapid'].reformatted || null));
+  check('판정 문장 생성', Object.values(F()).every(x => typeof x.판정 === 'string' && x.판정.length));
+  check('password/hidden 값은 항상 가림', !JSON.stringify(DB[KEY]).includes('ALWAYS_HIDDEN_SECRET_7219'));
+
+  L.push('', '── 판정 결과 ──');
+  for (const k of Object.keys(F())) L.push(`  ${k}  →  ${F()[k].판정}`);
+
+  // ── 2차: 페이지 이동/재시작 누적 ──────────────────────
+  const nF0 = Object.keys(F()).length, nA0 = DB[KEY].actions.length;
+  check('재시작 → 배지 다시 표시', await startRec());
+  fire(f.floor, '3');
+  check('재시작 후 정지 저장', await stopRec());
+  check('이전 기록 이어받기', Object.keys(F()).length >= nF0 && DB[KEY].actions.length > nA0,
+        `칸 ${nF0}→${Object.keys(F()).length}, 조작 ${nA0}→${DB[KEY].actions.length}`);
+  check('재시작 후에도 캘린더 판정 유지', F()['name:moveInDate'].opens === '캘린더');
+
+  // ── 3차: 정지 직전 입력이 버려지지 않는가 ───────────────
+  //  관찰은 400ms 뒤에 실행되도록 예약된다. 그 전에 정지하면 예전엔 사라졌다.
+  await startRec();
+  put(f.deposit, '123456');
+  await until(() => f.deposit.value.includes(','));
+  chrome.storage.session.set({ fl_on: false });            // 예약분이 깨기 전에 즉시 정지
+  await until(() => badges() === 0);
+  await until(() => ended());
+  check('정지 직전 입력도 저장됨',
+        (F()['name:deposit'].observations || []).some(o => String(o.남은값).includes('123,456')),
+        JSON.stringify((F()['name:deposit'].observations || []).slice(-1)));
+
+  // ── 4차: 정리된 세션의 지각 타이머가 새 세션을 덮어쓰지 않는가 ──
+  await startRec();
+  put(f.area, '99.99');
+  chrome.storage.session.set({ fl_on: false });            // 예약분을 깨우기 전에 정지
+  await until(() => badges() === 0);
+  const nA1 = DB[KEY].actions.length;
+  check('세션 A 재시작', await startRec());                 // 곧바로 세션 B
+  fire(f.floorAll, '5');
+  await wait(3000);                                         // 지각 타이머가 덮어쓸 여유를 준다
+  check('세션 B 정지 저장', await stopRec());
+  check('지각 타이머가 새 기록을 덮어쓰지 않음', DB[KEY].actions.length > nA1,
+        `조작 ${nA1}→${DB[KEY].actions.length}`);
+  check('정지 직전 면적 입력 유실 없음',
+        (F()['name:area'].observations || []).some(o => String(o.넣은값) === '99.99'));
+
+  // ── 5차: v2 구조·이벤트·상태·Shadow DOM ─────────────────
+  check('v2 종합 세션 시작', await startRec());
+  clickWithPointer(document.getElementById('tradeMonthly'));
+  clickWithPointer(document.getElementById('optElevator'));
+  clickWithPointer(document.getElementById('customCombo'));
+  await until(() => document.getElementById('customList').style.display === 'block');
+  dispatchHangulSequence(document.getElementById('customText'), '한글조합테스트');
+  const shadowInput = shadow.getElementById('shadowInput');
+  dispatchHangulSequence(shadowInput, '그림자한글');
+  put(f.accountPassword, 'PASSWORD_SECRET_8841');
+
+  const hiddenWrap = document.getElementById('conditionalWrap');
+  hiddenWrap.style.display = 'none';
+  await sendRuntime({ type: 'fieldlog:capture-state', label: '조건부 숨김', requestId: 'manual-hidden' });
+  hiddenWrap.style.display = '';
+  await sendRuntime({ type: 'fieldlog:capture-state', label: '조건부 재표시', requestId: 'manual-reshown' });
+  hiddenWrap.remove();
+  await sendRuntime({ type: 'fieldlog:capture-state', label: '조건부 제거', requestId: 'manual-removed' });
+
+  const big = document.createElement('div');
+  big.id = 'oversizedStateFixture';
+  big.textContent = 'x'.repeat(510000);
+  document.body.appendChild(big);
+  const stateReply = await sendRuntime({ type: 'fieldlog:capture-state', label: '큰 수동 상태', requestId: 'manual-big' });
+  big.remove();
+  const idemFirst = await sendRuntime({ type: 'fieldlog:capture-state', label: '중복 방지 원본', requestId: 'manual-idempotent', frameId: 7, documentId: 'selftest-document-1' });
+  const idemCount = states().length;
+  const idemRetry = await sendRuntime({ type: 'fieldlog:capture-state', label: '재시도는 추가 금지', requestId: 'manual-idempotent', frameId: 7, documentId: 'selftest-document-1' });
+  check('같은 requestId 상태 재시도는 멱등', idemFirst.ok && idemRetry.ok && idemFirst.stateId === idemRetry.stateId && states().length === idemCount);
+
+  const eventTarget = document.querySelector('h3');
+  for (let i = 0; i < 4050; i++) eventTarget.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, composed: true, key: 'F2', code: 'F2' }));
+  eventTarget.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, composed: true, key: 'F9', code: 'F9' }));
+  // ring buffer 상한 뒤에도 새 실제 조작이 남아야 한다.
+  dispatchHangulSequence(document.getElementById('customText'), '한글재조합');
+  dispatchHangulSequence(shadowInput, '그림자재입력');
+  const anonymousEditable = document.querySelector('[data-testid="anonymous-editable"]');
+  const anonymousKeyBefore = (Object.values(F()).find(x => x.attrs && x.attrs['data-testid'] === 'anonymous-editable') || {}).key;
+  dispatchHangulSequence(anonymousEditable, '익명한글');
+  check('v2 종합 세션 정지', await stopRec());
+
+  const radios = Object.values(F()).filter(x => x.attrs && x.attrs.type === 'radio' && x.attrs.name === 'tradeType');
+  const checks = Object.values(F()).filter(x => x.attrs && x.attrs.type === 'checkbox' && x.attrs.name === 'facility');
+  check('같은 name 라디오 2개를 개별 키로 보존', radios.length === 2 && new Set(radios.map(x => x.key)).size === 2,
+        radios.map(x => x.key).join(', '));
+  check('라디오 groupKey 보존', radios.length === 2 && radios[0].groupKey && radios[0].groupKey === radios[1].groupKey,
+        radios.map(x => x.groupKey).join(' / '));
+  check('같은 name 체크박스 2개를 개별 키로 보존', checks.length === 2 && new Set(checks.map(x => x.key)).size === 2);
+  const duplicateGeneral = Object.values(F()).filter(x => x.legacyName === 'duplicateGeneral');
+  check('일반 필드의 중복 name도 개별 키로 보존', duplicateGeneral.length === 2 && new Set(duplicateGeneral.map(x => x.key)).size === 2,
+        duplicateGeneral.map(x => x.key).join(', '));
+  const duplicateChoices = Object.values(F()).filter(x => x.legacyName === 'sharedChoice');
+  check('서로 다른 form의 같은 radio name/value도 개별 키', duplicateChoices.length === 2 &&
+        new Set(duplicateChoices.map(x => x.key)).size === 2 && duplicateChoices.every(x => /\|group:/.test(x.key)),
+        duplicateChoices.map(x => x.key).join(', '));
+  check('라디오 정적 라벨·value locator 보존', radios.some(x => (x.labels || []).includes('월세')) && radios.some(x => (x.locatorCandidates || []).some(l => /value=/.test(l.selector || ''))));
+
+  check('custom combobox/contenteditable 수집', !!F()['id:customCombo'] && !!F()['id:customText']);
+  check('ARIA 속성 확대 수집', F()['id:customCombo'].attrs['aria-controls'] === 'customList' && F()['id:customCombo'].attrs['aria-expanded'] === 'true');
+  check('locator/runtime/style/rect 수집', (F()['id:customCombo'].locatorCandidates || []).length &&
+        F()['id:customCombo'].runtime && F()['id:customCombo'].runtime.computedStyle && F()['id:customCombo'].runtime.rect);
+
+  const shadowField = F()['name:shadowValue'];
+  check('open Shadow DOM 필드 수집', !!shadowField && / >>> /.test(shadowField.path || ''), shadowField && shadowField.path);
+  check('Shadow DOM 스냅샷 HTML 보존', states().some(s => (s.openShadows || []).some(x =>
+        /shadowHost/.test(x.hostPath || '') && x.dom && !x.dom.error && /shadowInput/.test(x.dom.html || ''))));
+  check('Shadow 실제 target 이벤트 보존', (DB[KEY].interactionEvents || []).some(e => e.fieldKey === 'name:shadowValue' && / >>> /.test(e.actualTargetPath || '')));
+
+  const anonymousFields = Object.values(F()).filter(x => x.attrs && x.attrs['data-testid'] === 'anonymous-editable');
+  const anonymousKey = anonymousFields[0] && anonymousFields[0].key;
+  check('익명 contenteditable 입력 뒤에도 필드 키 1개 유지', anonymousFields.length === 1 && anonymousKey === anonymousKeyBefore,
+        `${anonymousKeyBefore || '-'} → ${anonymousFields.map(x => x.key).join(', ')}`);
+  check('익명 contenteditable 이벤트·action이 같은 키로 연결', !!anonymousKey &&
+        (DB[KEY].interactionEvents || []).some(e => e.fieldKey === anonymousKey && e.type === 'input') &&
+        (DB[KEY].actions || []).some(a => a.key === anonymousKey && a.type === 'change'));
+
+  const customEvents = (DB[KEY].interactionEvents || []).filter(e => e.fieldKey === 'id:customText').map(e => e.type);
+  check('한글 composition/input 이벤트 순서 보존', subsequence(customEvents,
+        ['compositionstart','compositionupdate','keydown','beforeinput','input','compositionend','change','keyup']), customEvents.join(' → '));
+  check('raw event seq 단조 증가', (DB[KEY].interactionEvents || []).every((e, i, a) => i === 0 || e.seq > a[i - 1].seq));
+  check('raw event 상한 + dropped count', DB[KEY].interactionEvents.length === DB[KEY].meta.limits.interactionEvents && DB[KEY].interactionEventsDropped > 0,
+        `${DB[KEY].interactionEvents.length}, dropped ${DB[KEY].interactionEventsDropped}`);
+  check('raw event 상한 뒤 최신 이벤트를 보존', (DB[KEY].interactionEvents || []).some(e => e.eventKey === 'F9'));
+
+  const customAction = DB[KEY].actions.find(a => a.key === 'id:customCombo' && a.type === 'click');
+  const radioAction = DB[KEY].actions.find(a => a.key === 'name:tradeType|id:tradeMonthly' && a.type === 'click' && a.before && a.before.phase === 'pointerdown');
+  const anonymousChange = DB[KEY].actions.find(a => a.key === anonymousKey && a.type === 'change');
+  check('pointerdown이 진짜 click 이전 checked 상태 보존', !!(radioAction && radioAction.before.targetContext.runtime.checked === false && radioAction.after.targetContext.runtime.checked === true),
+        radioAction && `${radioAction.before.targetContext.runtime.checked}→${radioAction.after.targetContext.runtime.checked}`);
+  check('semantic action 전후 context HTML', !!(customAction && customAction.before && customAction.before.targetContext && customAction.before.targetContext.dom && customAction.after && customAction.after.targetContext));
+  check('semantic action 뒤 overlay 연결', !!(customAction && customAction.after && (customAction.after.overlays || []).some(o => /listbox/.test(String(o.type)))));
+  check('change도 값 변경 전 문맥과 출처 보존', !!(anonymousChange && anonymousChange.before && /-cache$/.test(anonymousChange.before.source || '') &&
+        anonymousChange.before.targetContext && anonymousChange.after && anonymousChange.after.targetContext));
+  check('mutation child/attribute 요약', (DB[KEY].mutations || []).some(m => m.type === 'childList') && (DB[KEY].mutations || []).some(m => m.type === 'attribute' && m.name === 'aria-expanded'));
+
+  const conditional = F()['name:conditionalField'];
+  check('숨김→재표시→DOM 제거 전이', !!conditional && ['hidden','reshown','removed'].every(t => (conditional.transitions || []).some(x => x.type === t)),
+        JSON.stringify((conditional && conditional.transitions || []).map(x => x.type)));
+  check('수동 state requestId/label 저장', stateReply.ok && states().some(s => s.requestId === 'manual-big' && s.label === '큰 수동 상태'));
+  const bigState = states().find(s => s.requestId === 'manual-big');
+  check('state DOM HTML 크기 상한/truncated', !!bigState && bigState.dom.truncated && bigState.dom.html.length === DB[KEY].meta.limits.domHtmlChars,
+        bigState && `${bigState.dom.html.length}/${bigState.dom.originalLength}`);
+  const cleanState = states().find(s => s.requestId === 'manual-hidden') || states()[0];
+  check('state DOM에서 script/style/레코더 배지 제거', cleanState && !/<script/i.test(cleanState.dom.html) && !/<style/i.test(cleanState.dom.html) && !/data-fieldlog-ui="badge"/.test(cleanState.dom.html));
+  check('state에 runtime/overlay/frame/active 문맥', cleanState && Array.isArray(cleanState.fields) && cleanState.frameContext &&
+        cleanState.frameContext.chromeFrameId === 7 && cleanState.frameContext.chromeDocumentId === 'selftest-document-1' &&
+        Array.isArray(cleanState.overlays));
+  check('자동 시작/정지 state', states().some(s => String(s.requestId).startsWith('auto-start:')) &&
+        states().some(s => String(s.requestId).startsWith('auto-stop:')));
+  check('레코더 배지 mutation은 제외', !(DB[KEY].mutations || []).some(m => /fieldlog-ui|● REC/.test(JSON.stringify(m))));
+
+  // 제거한 fixture를 다음 세션에 되돌린다.
+  f.appendChild(hiddenWrap);
+
+  // ── 6차: 일반 저장 중 정지해도 force 최종 저장이 남는가 ──────
+  check('느린 저장 race 세션 시작', await startRec());
+  STORAGE_DELAY_MS = 700;
+  const raceSave = sendRuntime({ type: 'fieldlog:capture-state', label: '느린 저장 시작', requestId: 'race-inflight' });
+  await until(() => STORAGE_IN_FLIGHT > 0);
+  put(f.deposit, '777777');
+  await until(() => f.deposit.value.includes(','));
+  emitFlag(false);                                           // in-flight 저장 중 즉시 정지
+  const raceGone = await until(() => badges() === 0);
+  let pendingStopSettled = false;
+  const pendingStopPromise = sendRuntime({
+    type: 'fieldlog:stop', requestId: 'race-stop-waiter', frameId: 7, documentId: 'selftest-document-1',
+  }).then(reply => { pendingStopSettled = true; return reply; });
+  const pendingStopActuallyWaited = STORAGE_IN_FLIGHT > 0 && !pendingStopSettled;
+  await raceSave;
+  const pendingStopReply = await pendingStopPromise;
+  const raceIdle = await until(() => STORAGE_IN_FLIGHT === 0);
+  const raceSaved = await until(() => states().some(s => String(s.requestId).startsWith('auto-stop:')) &&
+    (F()['name:deposit'].observations || []).some(o => String(o.남은값).includes('777,777')));
+  check('in-flight 중 stop force 저장 보존', raceGone && raceIdle && raceSaved,
+        `inFlight=${STORAGE_IN_FLIGHT}, stop=${states().filter(s => String(s.requestId).startsWith('auto-stop:')).length}`);
+  check('inactive stop ACK도 진행 중인 최종 저장을 기다림', pendingStopActuallyWaited && pendingStopReply.ok && pendingStopReply.alreadyStopped === true);
+  check('event 상한 뒤 재시작한 새 이벤트도 보존', (DB[KEY].interactionEvents || []).some(e => e.fieldKey === 'name:deposit' && e.type === 'input'));
+  STORAGE_DELAY_MS = 0;
+
+  // ── 7차: 값 가림은 값만 숨기고 구조적 문구는 보존 ──────────
+  const MASK_SECRET = 'LEAK7';
+  check('마스킹 세션 시작', await startRec(true));
+  const MASKED_KEY = KEY;
+  check('마스크 모드별 storage key 분리', MASKED_KEY !== PLAIN_KEY && /:masked$/.test(MASKED_KEY) && /:plain$/.test(PLAIN_KEY || '') &&
+        DB[MASKED_KEY].meta.captureId === DB[PLAIN_KEY].meta.captureId && DB[PLAIN_KEY].meta.maskValues === false && DB[MASKED_KEY].meta.maskValues === true,
+        `${PLAIN_KEY} / ${MASKED_KEY}`);
+  const editable = document.getElementById('customText');
+  editable.setAttribute('data-private-value', MASK_SECRET);
+  dispatchHangulSequence(editable, MASK_SECRET);
+  const maskDialog = document.createElement('div');
+  maskDialog.id = 'maskValueDialog';
+  maskDialog.setAttribute('role', 'dialog');
+  maskDialog.innerHTML = '<span>마스킹 모달 라벨</span><div data-testid="nested-editable" role="textbox" contenteditable="true"></div>';
+  document.body.appendChild(maskDialog);
+  dispatchHangulSequence(maskDialog.querySelector('[data-testid="nested-editable"]'), MASK_SECRET);
+  put(f.accountPassword, 'PASSWORD_MASK_SECRET_3321');
+  put(f.deposit, '918273645');
+  await until(() => f.deposit.value.includes(','));
+  put(f.area, '731.57');
+  await until(() => f.areaPyeong.value !== '');
+  await sendRuntime({ type: 'fieldlog:capture-state', label: '마스킹 상태', requestId: 'masked-manual' });
+  check('마스킹 세션 정지', await stopRec());
+  const maskedJSON = JSON.stringify(DB[KEY]);
+  check('입력값·password·hidden 값 완전 비노출', !maskedJSON.includes(MASK_SECRET) &&
+        !maskedJSON.includes('LEAK') && !maskedJSON.includes('EAK7') &&
+        !maskedJSON.includes('PASSWORD_MASK_SECRET_3321') && !maskedJSON.includes('ALWAYS_HIDDEN_SECRET_7219') &&
+        !maskedJSON.includes('918273645') && !maskedJSON.includes('918,273,645') && !maskedJSON.includes('731.57'));
+  check('마스킹에서도 정적 라벨·옵션 문구 보존', maskedJSON.includes('월세') && maskedJSON.includes('옵션 A'));
+  const maskedState = states().find(s => s.requestId === 'masked-manual');
+  check('마스킹 runtime 값만 가림', maskedState.fields.some(x => x.key === 'name:deposit' && x.runtime.value === '[가림]'));
+  check('마스킹에서도 checked/selectedIndex 구조 보존', typeof F()[Object.keys(F()).find(k => k.includes('tradeType'))].runtime.checked === 'boolean' && typeof F()['name:floor'].runtime.selectedIndex === 'number');
+  const maskedDialog = (maskedState.overlays || []).find(x => /dialog/.test(String(x.type)) && /maskValueDialog/.test(x.path || ''));
+  check('부모 dialog 문맥도 하위 편집값만 가림', !!maskedDialog && !JSON.stringify(maskedDialog).includes('LEAK') &&
+        /마스킹 모달 라벨/.test(JSON.stringify(maskedDialog)) && /\[가림\]/.test(JSON.stringify(maskedDialog)));
+  maskDialog.remove();
+
+  done();
+
+  function done() {
+    L.push('', `<b>${fail === 0 ? '<span class="ok">전부 통과</span>' : '<span class="bad">실패 있음</span>'}  ${pass}/${pass + fail}</b>`);
+    document.getElementById('log').innerHTML = L.join('\n');
+    window.__selfTestDone = { pass, fail };
+  }
+};
+</script>
+<script src="../recorder.js"></script>
+<script>if (!location.search.includes('manual')) setTimeout(() => window.__runSelfTest(), 300);
+else document.getElementById('log').textContent = '수동 모드 — __runSelfTest() 호출';</script>

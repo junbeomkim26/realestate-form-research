@@ -1,0 +1,521 @@
+<!doctype html><meta charset="utf-8"><title>팝업 자체점검</title>
+<style>body{font:13px/1.6 -apple-system,sans-serif;padding:16px;background:#f6f7f9}
+#host{display:inline-block;vertical-align:top;border:1px solid #ccc;border-radius:10px;overflow:hidden}
+#log{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;background:#0d1117;color:#d7dce5;padding:12px;border-radius:8px;margin-top:14px}
+.ok{color:#6ee7b7}.bad{color:#f87171}</style>
+<h3>popup.html / popup.js 자체점검</h3>
+<div id="host"></div>
+<div id="log">준비 중…</div>
+<script>
+/* chrome.* 스텁 — 팝업이 실제로 쓰는 API만 흉내 낸다. */
+const DB = {
+  fl_mask: false,
+  "p:doc-nemo-top:masked": {
+    meta: { captureId: "doc-nemo-top", url: "https://www.nemoapp.kr/item/new", maskValues: true, frameId: 0 },
+    fields: { a: {}, b: {} }, clickables: {}, actions: [{}], timeline: [], states: [],
+  },
+  "p:doc-nemo-form:plain": {
+    meta: { captureId: "doc-nemo-form", url: "https://register.nemoapp.kr/form", maskValues: false, frameId: 4 },
+    fields: { a: {}, b: {}, c: {} }, clickables: {}, actions: [{}, {}], timeline: [], states: [],
+  },
+  "p:doc-nemo-blank:masked": {
+    meta: { captureId: "doc-nemo-blank", url: "about:blank", maskValues: true, frameId: 5 },
+    fields: { a: {} }, clickables: {}, actions: [], timeline: [], states: [],
+  },
+  "p:doc-nemo-ad:masked": {
+    meta: { captureId: "doc-nemo-ad", url: "https://ads.example/frame", maskValues: true, frameId: 6 },
+    fields: { a: {} }, clickables: {}, actions: [], timeline: [], states: [],
+  },
+  "p:doc-nemo-adsrcdoc:masked": {
+    meta: { captureId: "doc-nemo-adsrcdoc", url: "about:srcdoc", maskValues: true, frameId: 7 },
+    fields: { a: {} }, clickables: {}, actions: [], timeline: [], states: [],
+  },
+  "p:doc-zig-root:masked": {
+    meta: { captureId: "doc-zig-root", url: "https://ceo.zigbang.com/ads/oneroom/ad-item/new", maskValues: true, frameId: 0 },
+    fields: { a: {} }, clickables: {}, actions: [{}], timeline: [], states: [],
+  },
+  "p:doc-zig-data:masked": {
+    meta: { captureId: "doc-zig-data", url: "data:text/html,child", maskValues: true, frameId: 1 },
+    fields: { a: {} }, clickables: {}, actions: [], timeline: [], states: [],
+  },
+};
+const listeners = [];
+const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+
+window.__downloads = [];
+window.__downloadAttempts = [];
+window.__anchorDownloads = [];
+window.__tabQueries = [];
+window.__tabMessages = [];
+window.__frameQueries = [];
+window.__captures = [];
+window.__confirmCalls = [];
+window.__confirmResult = true;
+window.__failQuery = false;
+window.__failFrameQueryFor = null;
+window.__failCapture = false;
+window.__failDownloadFor = "";
+window.__failStorageGet = false;
+window.__failStorageSet = false;
+window.__failStorageRemove = false;
+window.__holdFlOnStart = false;
+window.__heldFlOnStarts = [];
+window.__messageFailure = null;
+window.__holdMessage = null;
+window.__heldMessages = [];
+
+window.__activeTab = {
+  id: 17, windowId: 3, active: true,
+  url: "https://www.nemoapp.kr/item/new",
+};
+window.__allTabs = [
+  window.__activeTab,
+  { id: 21, windowId: 3, active: false, url: "https://ceo.zigbang.com/ads/oneroom/ad-item/new" },
+  { id: 31, windowId: 3, active: false, url: "https://unrelated.example/form" },
+];
+window.__frames = {
+  17: [
+    { frameId: 0, parentFrameId: -1, url: "https://www.nemoapp.kr/item/new" },
+    { frameId: 4, parentFrameId: 0, url: "https://register.nemoapp.kr/form" },
+    { frameId: 5, parentFrameId: 4, url: "about:blank" },
+    { frameId: 6, parentFrameId: 0, url: "https://ads.example/frame" },
+    { frameId: 7, parentFrameId: 6, url: "about:srcdoc" },
+  ],
+  21: [
+    { frameId: 0, parentFrameId: -1, url: "https://ceo.zigbang.com/ads/oneroom/ad-item/new" },
+    { frameId: 1, parentFrameId: 0, url: "data:text/html,child" },
+    { frameId: 2, parentFrameId: 0, url: "https://tracker.example/ad" },
+  ],
+  31: [
+    { frameId: 0, parentFrameId: -1, url: "https://unrelated.example/form" },
+    { frameId: 1, parentFrameId: 0, url: "about:blank" },
+  ],
+};
+
+const frameRecord = new Map([
+  ["17:0", "p:doc-nemo-top:masked"],
+  ["17:4", "p:doc-nemo-form:plain"],
+  ["17:5", "p:doc-nemo-blank:masked"],
+  ["17:6", "p:doc-nemo-ad:masked"],
+  ["17:7", "p:doc-nemo-adsrcdoc:masked"],
+  ["21:0", "p:doc-zig-root:masked"],
+  ["21:1", "p:doc-zig-data:masked"],
+]);
+
+function withLastError(message, callback, value) {
+  chrome.runtime.lastError = { message };
+  try { if (callback) callback(value); }
+  finally { chrome.runtime.lastError = undefined; }
+}
+
+// 확장의 제어 플래그(fl_on/fl_finalizing)는 chrome.storage.session 에 있다.
+// content script 가 읽으려면 setAccessLevel 이 먼저 불려야 하므로 그것도 흉내낸다.
+const SESSION = { fl_on: false, fl_finalizing: false };
+window.__sessionAccessLevels = [];
+
+function storageChanges(next, area = "local", store = DB) {
+  const changes = {};
+  for (const [key, value] of Object.entries(next)) {
+    changes[key] = { oldValue: clone(store[key]), newValue: clone(value) };
+    store[key] = clone(value);
+  }
+  listeners.forEach((listener) => listener(changes, area));
+}
+
+function completeStorageSet(object, callback, area = "local", store = DB) {
+  storageChanges(object, area, store);
+  if (callback) callback();
+}
+
+function readArea(store, keys) {
+  let result = {};
+  if (keys == null) result = clone(store);
+  else if (typeof keys === "string") { if (keys in store) result[keys] = clone(store[keys]); }
+  else if (Array.isArray(keys)) {
+    for (const key of keys) if (key in store) result[key] = clone(store[key]);
+  } else {
+    for (const [key, fallback] of Object.entries(keys || {})) result[key] = key in store ? clone(store[key]) : clone(fallback);
+  }
+  return result;
+}
+
+function respondToFrame(tabId, message, options, callback) {
+  const frameId = options && options.frameId;
+  const response = () => {
+    const failure = window.__messageFailure;
+    if (failure && failure.type === message.type && failure.tabId === tabId && failure.frameId === frameId) {
+      if (failure.kind === "lastError") return withLastError(failure.message || "send test failure", callback, undefined);
+      if (failure.kind === "none") return callback && callback(undefined);
+      return callback && callback({ ok: false, error: failure.message || "recorder test failure" });
+    }
+
+    const key = frameRecord.get(`${tabId}:${frameId}`);
+    const record = key && DB[key];
+    if (message.type === "fieldlog:capture-state" && record) {
+      const next = clone(record);
+      const stateId = `${message.requestId}:${frameId}`;
+      next.states = Array.isArray(next.states) ? next.states : [];
+      next.states.push({ stateId, requestId: message.requestId, label: message.label, capturedAt: new Date().toISOString() });
+      completeStorageSet({ [key]: next }, () => callback && callback({
+        ok: true, captureId: next.meta.captureId, storageKey: key, frameId, stateId,
+      }));
+      return;
+    }
+    if (message.type === "fieldlog:stop" && record) {
+      const next = clone(record);
+      next.meta = Object.assign({}, next.meta, { updatedAt: new Date().toISOString() });
+      completeStorageSet({ [key]: next }, () => callback && callback({
+        ok: true, captureId: next.meta.captureId, storageKey: key, frameId, everRecorded: true,
+      }));
+      return;
+    }
+    if (!record) {
+      // 실제 recorder: 녹화한 적 없는 문서는 정지에 everRecorded:false 로 답한다.
+      callback && callback(message.type === "fieldlog:stop"
+        ? { ok: false, error: "final-save-status-unknown", everRecorded: false }
+        : { ok: false, error: "not-recording" });
+      return;
+    }
+    callback && callback({ ok: true, captureId: record.meta.captureId, storageKey: key, frameId, everRecorded: true });
+  };
+
+  if (window.__holdMessage && window.__holdMessage({ tabId, message, frameId })) {
+    window.__heldMessages.push(response);
+  } else {
+    setTimeout(response, 0);
+  }
+}
+
+window.chrome = {
+  runtime: { id: "popuptest", lastError: undefined },
+  storage: {
+    local: {
+      get(keys, callback) {
+        setTimeout(() => {
+          if (window.__failStorageGet) return withLastError("storage get test failure", callback, undefined);
+          callback(readArea(DB, keys));
+        }, 0);
+      },
+      set(object, callback) {
+        setTimeout(() => {
+          if (window.__failStorageSet) return withLastError("storage set test failure", callback, undefined);
+          completeStorageSet(object, callback);
+        }, 0);
+      },
+      remove(keys, callback) {
+        setTimeout(() => {
+          if (window.__failStorageRemove) return withLastError("storage remove test failure", callback, undefined);
+          const changes = {};
+          for (const key of [].concat(keys)) {
+            if (!(key in DB)) continue;
+            changes[key] = { oldValue: clone(DB[key]), newValue: undefined };
+            delete DB[key];
+          }
+          listeners.forEach((listener) => listener(changes, "local"));
+          if (callback) callback();
+        }, 0);
+      },
+    },
+    session: {
+      get(keys, callback) {
+        setTimeout(() => {
+          if (window.__failSessionGet) return withLastError("session get test failure", callback, undefined);
+          callback(readArea(SESSION, keys));
+        }, 0);
+      },
+      set(object, callback) {
+        setTimeout(() => {
+          if (window.__failSessionSet) return withLastError("session set test failure", callback, undefined);
+          const run = () => completeStorageSet(object, callback, "session", SESSION);
+          if (window.__holdFlOnStart && object && object.fl_on === true) window.__heldFlOnStarts.push(run);
+          else run();
+        }, 0);
+      },
+      setAccessLevel(options, callback) {
+        window.__sessionAccessLevels.push(options && options.accessLevel);
+        setTimeout(() => {
+          if (window.__failSetAccessLevel) return withLastError("access level test failure", callback, undefined);
+          if (callback) callback();
+        }, 0);
+      },
+    },
+    onChanged: { addListener: (listener) => listeners.push(listener) },
+  },
+  tabs: {
+    query(options, callback) {
+      window.__tabQueries.push(clone(options));
+      setTimeout(() => {
+        if (window.__failQuery) return withLastError("query test failure", callback, undefined);
+        callback(options && options.active ? [clone(window.__activeTab)] : clone(window.__allTabs));
+      }, 0);
+    },
+    sendMessage(tabId, message, options, callback) {
+      window.__tabMessages.push({ tabId, message: clone(message), options: clone(options) });
+      respondToFrame(tabId, message, options, callback);
+    },
+    captureVisibleTab(windowId, options, callback) {
+      window.__captures.push({ windowId, options: clone(options) });
+      setTimeout(() => window.__failCapture
+        ? withLastError("capture test failure", callback, undefined)
+        : callback("data:image/png;base64,iVBORw0KGgo="), 0);
+    },
+  },
+  webNavigation: {
+    getAllFrames({ tabId }, callback) {
+      window.__frameQueries.push(tabId);
+      setTimeout(() => tabId === window.__failFrameQueryFor
+        ? withLastError("frame query test failure", callback, undefined)
+        : callback(clone(window.__frames[tabId] || [])), 0);
+    },
+  },
+  downloads: {
+    download(options, callback) {
+      window.__downloadAttempts.push(clone(options));
+      const type = /\.png$/i.test(options.filename || "") ? "png" : /\.json$/i.test(options.filename || "") ? "json" : "other";
+      if (window.__failDownloadFor === type) {
+        window.__failDownloadFor = "";
+        return setTimeout(() => withLastError(`${type} download test failure`, callback, undefined), 0);
+      }
+      window.__downloads.push(options);
+      setTimeout(() => callback && callback(window.__downloads.length), 0);
+    },
+  },
+};
+
+window.confirm = (message) => {
+  window.__confirmCalls.push(message);
+  return window.__confirmResult;
+};
+HTMLAnchorElement.prototype.click = function () {
+  window.__anchorDownloads.push({ href: this.href, filename: this.download });
+};
+
+const output = [];
+let pass = 0;
+let fail = 0;
+window.__err = [];
+window.addEventListener("error", (event) => window.__err.push(String(event.message)));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (predicate, timeout = 15000) => {
+  const started = Date.now();
+  for (;;) {
+    try { if (predicate()) return true; } catch (_) {}
+    if (Date.now() - started > timeout) return false;
+    await wait(40);
+  }
+};
+function check(name, condition, detail) {
+  if (condition) pass += 1; else fail += 1;
+  output.push(`<span class="${condition ? "ok" : "bad"}">${condition ? "✔" : "✘"}</span> ${name}${detail ? "  — " + detail : ""}`);
+  document.getElementById("log").innerHTML = output.join("\n");
+}
+const q = (id) => document.getElementById(id);
+const records = () => Object.keys(DB).filter((key) => key.startsWith("p:"));
+const shots = () => Object.keys(DB).filter((key) => key.startsWith("s:"));
+const totalStates = () => records().reduce((sum, key) => sum + (Array.isArray(DB[key].states) ? DB[key].states.length : 0), 0);
+const messagesSince = (index, type) => window.__tabMessages.slice(index).filter((item) => item.message.type === type);
+const frameSignatures = (messages) => messages.map((item) => `${item.tabId}:${item.options.frameId}`).sort();
+
+(async () => {
+  const popupHtml = await (await fetch("../popup.html")).text();
+  q("host").innerHTML = popupHtml.replace(/<script[^>]*><\/script>/g, "");
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "../popup.js";
+    script.onload = resolve;
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+  await wait(250);
+
+  check("popup.js 로드 오류 없음", window.__err.length === 0, window.__err.join(" | "));
+  check("초기 상태 = 정지", q("stateText").textContent === "정지" && q("halt").disabled, q("stateText").textContent);
+  check("불투명 p: 키 7개 집계", q("nPages").textContent === "7", q("nPages").textContent);
+  check("기록이 있으면 정지 중 저장·삭제 활성", !q("save").disabled && !q("wipe").disabled);
+  check("정지 중 상태 기록 UI 비활성", q("stateName").disabled && q("screenshot").disabled && q("captureState").disabled);
+  check("화면 PNG 기본값 = 끔", q("screenshot").checked === false);
+  check("가리기 경고 문구 정확함", q("mask").parentElement.textContent.includes("입력값 가리기 (완전 익명화 아님)"));
+  check("불투명 키 대신 meta.url 표시", q("pages").textContent.includes("register.nemoapp.kr/form") && !q("pages").textContent.includes("doc-nemo-form"), q("pages").textContent);
+
+  q("note").focus();
+  q("note").value = "입력 중인 현장 메모";
+  await new Promise((resolve) => chrome.storage.local.set({ fl_note: "저장소의 이전 메모" }, resolve));
+  await render();
+  check("포커스된 메모를 render가 덮어쓰지 않음", q("note").value === "입력 중인 현장 메모", q("note").value);
+
+  window.__failStorageSet = true;
+  q("note").value = "저장 실패 메모";
+  q("note").dispatchEvent(new Event("change"));
+  check("storage.set lastError를 사용자에게 표시", await until(() => q("msg").textContent.includes("메모 저장 실패") && q("msg").textContent.includes("storage set test failure")), q("msg").textContent);
+  window.__failStorageSet = false;
+
+  q("note").value = "네모-상태수집";
+  q("note").dispatchEvent(new Event("change"));
+  q("mask").checked = true;
+  q("mask").dispatchEvent(new Event("change"));
+  check("메모·가리기 설정 저장", await until(() => DB.fl_note === "네모-상태수집" && DB.fl_mask === true));
+
+  window.__failStorageGet = true;
+  safeRender();
+  check("storage.get lastError를 사용자에게 표시", await until(() => q("msg").textContent.includes("저장소 읽기 실패") && q("msg").textContent.includes("storage get test failure")), q("msg").textContent);
+  window.__failStorageGet = false;
+
+  window.__holdFlOnStart = true;
+  q("go").click();
+  check("시작 처리 중 모든 변경 버튼 잠금", await until(() => q("go").disabled && q("halt").disabled && q("save").disabled && q("wipe").disabled && q("note").disabled));
+  check("시작 ACK 전에는 녹화 플래그가 바뀌지 않음", SESSION.fl_on === false);
+  window.__holdFlOnStart = false;
+  window.__heldFlOnStarts.splice(0).forEach((release) => release());
+  check("녹화 시작 → 저장소 플래그", await until(() => SESSION.fl_on === true));
+  check("녹화 중 UI 전환", await until(() => q("stateText").textContent === "녹화 중" && q("go").disabled && !q("halt").disabled));
+  check("녹화 중 저장·삭제·가리기 잠금", q("save").disabled && q("wipe").disabled && q("mask").disabled);
+  check("녹화 중 상태 기록 UI 활성", !q("stateName").disabled && !q("screenshot").disabled && !q("captureState").disabled);
+
+  const firstBase = window.__tabMessages.length;
+  window.__holdMessage = ({ message, frameId }) => message.type === "fieldlog:capture-state" && frameId === 5;
+  q("stateName").value = "초기 빈 폼";
+  q("captureState").click();
+  check("활성 탭 프레임 목록 조회", await until(() => window.__frameQueries.includes(17)));
+  check("활성 탭의 http/https 프레임과 상속 프레임 전부 선택", await until(() => messagesSince(firstBase, "fieldlog:capture-state").length === 5)
+    && JSON.stringify(frameSignatures(messagesSince(firstBase, "fieldlog:capture-state"))) === JSON.stringify(["17:0", "17:4", "17:5", "17:6", "17:7"]),
+    JSON.stringify(frameSignatures(messagesSince(firstBase, "fieldlog:capture-state"))));
+  const firstMessages = messagesSince(firstBase, "fieldlog:capture-state");
+  check("각 프레임에 frameId 옵션·payload 일치", firstMessages.every((item) => item.options.frameId === item.message.frameId));
+  check("모든 프레임에 같은 상태 requestId·이름 전달", new Set(firstMessages.map((item) => item.message.requestId)).size === 1
+    && firstMessages.every((item) => item.message.label === "초기 빈 폼"));
+  check("마지막 프레임 ACK 대기 중 완료 처리 안 함", q("stateName").value === "초기 빈 폼" && !q("msg").textContent.includes("DOM 상태 저장 완료"));
+  check("상태 저장 처리 중 정지·저장·삭제 잠금", q("halt").disabled && q("save").disabled && q("wipe").disabled && q("captureState").disabled);
+  window.__holdMessage = null;
+  window.__heldMessages.splice(0).forEach((release) => release());
+  check("모든 프레임 ACK 후 상태 완료", await until(() => q("msg").textContent.includes("DOM 상태 저장 완료 — 5개 프레임") && totalStates() === 5), `${q("msg").textContent} / ${totalStates()}`);
+  check("PNG 미선택 시 화면 캡처 없음", window.__captures.length === 0 && !window.__downloads.some((item) => /\.png$/i.test(item.filename || "")));
+
+  const failedBase = window.__tabMessages.length;
+  const captureCountBeforeFailure = window.__captures.length;
+  window.__messageFailure = { type: "fieldlog:capture-state", tabId: 17, frameId: 4, kind: "response", message: "iframe save failure" };
+  q("screenshot").checked = true;
+  q("stateName").value = "부분 실패";
+  q("captureState").click();
+  check("가리기 중 PNG 비가림 확인 경고", await until(() => window.__confirmCalls.some((message) => message.includes("화면 PNG의 입력값은 가려지지 않습니다"))));
+  check("실패해도 대상 프레임은 모두 한 번씩 호출", await until(() => messagesSince(failedBase, "fieldlog:capture-state").length === 5)
+    && new Set(messagesSince(failedBase, "fieldlog:capture-state").map((item) => item.options.frameId)).size === 5);
+  check("한 프레임 실패를 부분 실패로 표시", await until(() => q("msg").textContent.includes("DOM 상태 기록 실패")
+    && q("msg").textContent.includes("5개 대상 프레임 중 1개 실패") && q("msg").textContent.includes("iframe save failure")), q("msg").textContent);
+  check("프레임 일부 실패 시 PNG를 만들지 않음", window.__captures.length === captureCountBeforeFailure && shots().length === 0);
+  window.__messageFailure = null;
+  await until(() => !q("captureState").disabled);
+
+  const pngBase = window.__tabMessages.length;
+  q("stateName").value = "관리비 모달 열림";
+  q("captureState").click();
+  check("성공한 상태에서만 PNG 캡처·다운로드", await until(() => window.__downloads.some((item) => /\.png$/i.test(item.filename || "")))
+    && window.__captures.length === captureCountBeforeFailure + 1
+    && window.__captures.at(-1).windowId === 3 && window.__captures.at(-1).options.format === "png");
+  const pngDownload = window.__downloads.find((item) => /\.png$/i.test(item.filename || ""));
+  check("PNG 파일명에 메모·상태 이름 반영", /네모-상태수집/.test(pngDownload.filename) && /관리비-모달-열림/.test(pngDownload.filename), pngDownload.filename);
+  check("성공한 PNG만 s: 메타 저장", await until(() => shots().length === 1));
+  const shot = DB[shots()[0]];
+  const pngMessages = messagesSince(pngBase, "fieldlog:capture-state");
+  check("PNG 메타가 상태 요청·페이지와 연결", shot.requestId === pngMessages[0].message.requestId
+    && shot.label === "관리비 모달 열림" && shot.pageUrl === window.__activeTab.url && shot.filename === pngDownload.filename);
+  check("PNG 메타에 프레임별 captureId/stateId 저장", Array.isArray(shot.frames) && shot.frames.length === 5
+    && shot.frames.every((frame) => Number.isInteger(frame.frameId) && frame.captureId && frame.stateId));
+
+  const beforeCaptureApiFailure = shots().length;
+  window.__failCapture = true;
+  q("stateName").value = "캡처 API 실패";
+  q("captureState").click();
+  check("PNG 캡처 실패와 DOM 성공을 구분", await until(() => q("msg").textContent.includes("DOM 상태 저장 완료 · 화면 PNG 캡처 실패")
+    && q("msg").textContent.includes("capture test failure")), q("msg").textContent);
+  check("캡처 실패 PNG는 메타 없음", shots().length === beforeCaptureApiFailure);
+  window.__failCapture = false;
+  await until(() => !q("captureState").disabled);
+
+  window.__failDownloadFor = "png";
+  q("stateName").value = "PNG 다운로드 실패";
+  q("captureState").click();
+  check("PNG 다운로드 실패와 DOM 성공을 구분", await until(() => q("msg").textContent.includes("DOM 상태 저장 완료 · 화면 PNG 다운로드 실패")
+    && q("msg").textContent.includes("png download test failure")), q("msg").textContent);
+  check("다운로드 실패 PNG는 메타 없음", shots().length === beforeCaptureApiFailure);
+  await until(() => !q("captureState").disabled);
+
+  const stopBase = window.__tabMessages.length;
+  window.__holdMessage = ({ tabId, message, frameId }) => message.type === "fieldlog:stop" && tabId === 17 && frameId === 7;
+  q("halt").click();
+  check("정지는 녹화한 origin 의 탭만 조회", await until(() => window.__frameQueries.includes(17)) && !window.__frameQueries.includes(31));
+  check("정지는 녹화 중인 탭의 프레임에만 전송", await until(() => messagesSince(stopBase, "fieldlog:stop").length === 5)
+    && JSON.stringify(frameSignatures(messagesSince(stopBase, "fieldlog:stop"))) === JSON.stringify(["17:0", "17:4", "17:5", "17:6", "17:7"]),
+    JSON.stringify(frameSignatures(messagesSince(stopBase, "fieldlog:stop"))));
+  check("정지 메시지도 frameId 옵션·payload 일치", messagesSince(stopBase, "fieldlog:stop").every((item) => item.options.frameId === item.message.frameId));
+  check("최종 ACK 전에는 정지 확인 대기 상태", SESSION.fl_on === false && SESSION.fl_finalizing === true,
+        `on=${SESSION.fl_on} finalizing=${SESSION.fl_finalizing}`);
+  check("정지 처리 중 저장·삭제·조작 잠금", q("go").disabled && q("halt").disabled && q("save").disabled && q("wipe").disabled && q("captureState").disabled);
+  window.__holdMessage = null;
+  window.__heldMessages.splice(0).forEach((release) => release());
+  check("모든 정지 ACK 뒤에만 확인 대기 해제", await until(() => SESSION.fl_finalizing === false && q("stateText").textContent === "정지"), `finalizing=${SESSION.fl_finalizing}`);
+  check("정지 후 저장·삭제·가리기 재활성", !q("save").disabled && !q("wipe").disabled && !q("mask").disabled);
+  check("정지 완료 메시지에 확인 프레임 수와 저장 파일", q("msg").textContent.includes("정지 완료 — 5개 프레임 확인")
+        && q("msg").textContent.includes("다운로드 폴더에"), q("msg").textContent);
+  const autoSaved = window.__downloads.find((item) => /^fieldlog\/.+\.json$/i.test(item.filename || ""));
+  check("정지가 JSON 을 자동 저장", !!autoSaved, JSON.stringify(window.__downloads.map((item) => item.filename)));
+  check("자동 저장 파일명에 최상위 사이트 이름", /www\.nemoapp\.kr/.test((autoSaved || {}).filename || ""), (autoSaved || {}).filename);
+  if (autoSaved && autoSaved.url) {
+    const session = JSON.parse(await (await fetch(autoSaved.url)).text());
+    // 이번에 녹화한 탭의 기록만 담아야 한다. 저장소에 남아 있던 다른 사이트 기록은 빠진다.
+    check("정지 저장본은 이번 세션 기록만 담음", session.pageCount === 5
+      && session.pages.every((page) => !/zig/.test(page.storageKey)),
+      `${session.pageCount} / ${session.pages.map((page) => page.storageKey).join(",")}`);
+  } else {
+    check("정지 저장본은 이번 세션 기록만 담음", false, "blob URL 없음");
+  }
+
+  const expectedStateCount = totalStates();
+  const anchorBase = window.__anchorDownloads.length;
+  window.__failDownloadFor = "json";
+  q("save").click();
+  check("JSON 다운로드 API 실패 표시·앵커 폴백", await until(() => q("msg").textContent.includes("JSON 다운로드 API 실패")
+        && window.__anchorDownloads.length === anchorBase + 1), q("msg").textContent);
+  await until(() => !q("save").disabled);
+
+  const jsonBase = window.__downloads.length;
+  q("save").click();
+  check("JSON 다운로드 호출", await until(() => window.__downloads.slice(jsonBase).some((item) => /\.json$/i.test(item.filename || ""))));
+  const jsonDownload = window.__downloads.slice(jsonBase).find((item) => /\.json$/i.test(item.filename || ""));
+  check("JSON 파일명에 메모 반영", /네모-상태수집/.test(jsonDownload.filename || ""), jsonDownload.filename);
+  if (jsonDownload.url) {
+    const exported = JSON.parse(await (await fetch(jsonDownload.url)).text());
+    check("JSON schemaVersion = 2", exported.schemaVersion === 2, String(exported.schemaVersion));
+    check("페이지별 가리기 혼합 표시", exported.maskValues === "mixed", String(exported.maskValues));
+    check("불투명 storageKey와 meta.url을 함께 내보냄", exported.pageCount === 7
+      && exported.pages.every((page) => /^p:doc-/.test(page.storageKey) && page.pageUrl === page.meta.url)
+      && exported.pages.some((page) => page.storageKey === "p:doc-nemo-form:plain" && page.pageUrl.includes("register.nemoapp.kr")));
+    check("JSON 상태·스크린샷 집계", exported.stateCount === expectedStateCount && exported.screenshotCount === 1
+      && exported.screenshots.length === 1 && exported.screenshots[0].requestId === shot.requestId,
+      `${exported.stateCount}/${exported.screenshotCount}`);
+    check("JSON 메모·페이지 기본 구조", exported.note === "네모-상태수집" && Array.isArray(exported.pages) && Array.isArray(exported.screenshots));
+  } else {
+    check("JSON 저장 내용 구조", false, "blob URL 없음");
+  }
+  await until(() => !q("save").disabled);
+
+  window.__failStorageRemove = true;
+  q("wipe").click();
+  check("storage.remove lastError를 사용자에게 표시", await until(() => q("msg").textContent.includes("기록 지우기 실패")
+    && q("msg").textContent.includes("storage remove test failure")), q("msg").textContent);
+  check("삭제 실패 시 기존 기록 유지", records().length === 7 && shots().length === 1);
+  window.__failStorageRemove = false;
+  await until(() => !q("wipe").disabled);
+
+  q("wipe").click();
+  check("p:/s: 기록 함께 지우기", await until(() => records().length === 0 && shots().length === 0));
+  check("지운 뒤 통계·저장 비활성", await until(() => q("save").disabled && q("nPages").textContent === "0"
+    && q("nStates").textContent === "0" && q("nScreenshots").textContent === "0"));
+
+  output.push("", `<b>${fail === 0 ? "<span class=\"ok\">전부 통과</span>" : "<span class=\"bad\">실패 있음</span>"}  ${pass}/${pass + fail}</b>`);
+  q("log").innerHTML = output.join("\n");
+  window.__popupTestDone = { pass, fail };
+})().catch((error) => {
+  check("실행 예외", false, String(error && error.stack || error));
+  window.__popupTestDone = { pass, fail };
+});
+</script>

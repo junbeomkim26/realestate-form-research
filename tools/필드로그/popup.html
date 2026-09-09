@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>필드로그</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    width: 310px; margin: 0; padding: 13px;
+    font: 13px/1.5 -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+    background: #0d1117; color: #d7dce5;
+  }
+  h1 { margin: 0 0 11px; font-size: 13px; font-weight: 700; letter-spacing: .02em; color: #a5b4fc; }
+
+  #state {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 11px; border-radius: 8px; margin-bottom: 11px;
+    background: #161b26; border: 1px solid #262d3d; font-weight: 700;
+  }
+  #state.on { background: #1a1030; border-color: #6366f1; color: #c7d2fe; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #4b5563; flex: none; }
+  #state.on #dot { background: #ef4444; animation: pulse 1.1s infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  label.f { display: block; font-size: 11px; color: #8b93a7; margin: 0 0 4px; }
+  input[type=text] {
+    width: 100%; padding: 7px 9px; border-radius: 6px; font: inherit;
+    background: #161b26; border: 1px solid #2c3346; color: #d7dce5;
+  }
+  input[type=text]:focus { outline: none; border-color: #6366f1; }
+  label.chk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #8b93a7; margin: 8px 0 12px; cursor: pointer; }
+  label.chk.disabled { cursor: default; opacity: .45; }
+
+  #captureBox {
+    margin: 0 0 11px; padding: 9px; border: 1px solid #262d3d;
+    border-radius: 8px; background: #111722;
+  }
+  #captureBox .chk { margin: 7px 0; }
+  #captureState { width: 100%; margin-top: 1px; background: #334155; border-color: #64748b; }
+  #captureState:hover:not(:disabled) { background: #475569; }
+
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 11px; }
+  button {
+    padding: 9px 6px; border-radius: 7px; font: inherit; font-weight: 700;
+    border: 1px solid #2c3346; background: #1c2333; color: #d7dce5; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #252d40; }
+  button:disabled { opacity: .35; cursor: default; }
+  #go { background: #4338ca; border-color: #6366f1; color: #fff; }
+  #go:hover:not(:disabled) { background: #4f46e5; }
+  #save { grid-column: 1 / -1; background: #065f46; border-color: #10b981; color: #d1fae5; }
+  #save:hover:not(:disabled) { background: #047857; }
+  #wipe { grid-column: 1 / -1; font-weight: 500; font-size: 11.5px; padding: 6px; color: #8b93a7; }
+
+  #stats { font-size: 11.5px; line-height: 1.85; color: #8b93a7; border-top: 1px solid #202737; padding-top: 9px; }
+  #stats b { color: #6ee7b7; font-variant-numeric: tabular-nums; }
+  #pages { margin: 5px 0 0; padding: 0; list-style: none; max-height: 108px; overflow: auto; }
+  #pages li { font-size: 10.5px; color: #6b7387; padding: 2px 0; border-top: 1px solid #171d29; word-break: break-all; }
+  #pages li span { color: #94a3b8; }
+
+  #warn { margin-top: 10px; font-size: 10.5px; line-height: 1.6; color: #f59e0b; background: #1f1603; border: 1px solid #78350f; border-radius: 6px; padding: 7px 9px; }
+  #msg { margin-top: 8px; font-size: 11px; color: #6ee7b7; min-height: 15px; }
+</style>
+
+<h1>필드로그 <span style="color:#4d5566;font-weight:500">FieldLog</span></h1>
+
+<div id="state"><span id="dot"></span><span id="stateText">정지</span></div>
+
+<label class="f" for="note">현장 메모 (파일명에 들어감)</label>
+<input type="text" id="note" placeholder="예) 취업사이트-지원서-1차" autocomplete="off">
+<label class="chk"><input type="checkbox" id="mask"> 입력값 가리기 (완전 익명화 아님)</label>
+
+<div id="captureBox">
+  <label class="f" for="stateName">현재 상태 이름</label>
+  <input type="text" id="stateName" placeholder="예) 관리비 모달 열림" autocomplete="off" disabled>
+  <label class="chk" id="screenshotLabel"><input type="checkbox" id="screenshot" disabled> 화면 PNG도 저장</label>
+  <button id="captureState" disabled>현재 상태 기록</button>
+</div>
+
+<div class="btns">
+  <button id="go">녹화 시작</button>
+  <button id="halt" disabled>정지</button>
+  <button id="save">JSON 저장</button>
+  <button id="wipe">기록 지우기</button>
+</div>
+
+<div id="stats">
+  페이지 <b id="nPages">0</b> · 칸 <b id="nFields">0</b> · 조작 <b id="nActs">0</b><br>
+  상태 <b id="nStates">0</b> · 화면 PNG <b id="nScreenshots">0</b>
+  <ul id="pages"></ul>
+</div>
+
+<div id="warn">제출·등록·저장 버튼은 누르지 마세요. 실제로 접수·등록됩니다.</div>
+<div id="msg"></div>
+
+<script src="popup.js"></script>
